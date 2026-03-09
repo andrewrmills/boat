@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Three.js Starter</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.159.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.159.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { Sky } from 'three/addons/objects/Sky.js';
+
+    let scene, camera, renderer, clock;
+    const GrdSiz = 200;
+    let gu = { time: { value: 0 }, grid: { value: GrdSiz } };
+    let WtrNrm = null;
+
+    function init() {
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0xffeedd, 0.0015);
+      camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.5;
+      document.body.appendChild(renderer.domElement);
+      clock = new THREE.Clock();
+
+      // Create a Benchy-like ship made from basic geometries
+      const ship = new THREE.Group();
+
+      const benchyColor = 0xff5533;
+
+      // Ship hull
+      const hullGeometry = new THREE.BoxGeometry(2, 0.70, 0.8);
+      const hullMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
+      const hull = new THREE.Mesh(hullGeometry, hullMaterial);
+      hull.position.y = -0.15; // bottom stays at y=-0.5, top now at y=0.20
+      ship.add(hull);
+
+      // Bow: lofted mesh — base matches hull+rail rectangle, tip is at rail-top height (deck level)
+      // Top face stays flat at rail height; bottom keel sweeps upward to meet the tip.
+      (function buildBow() {
+        const verts = [], tris = [];
+        const BOW_LEN = 0.469, SECTIONS = 28;
+        // Y_TOP = rail-top height (0.025), so tip is at the very top and deck is flat
+        const Y_BOT = -0.5, Y_TOP = 0.425, ZH = 0.4;
+        const TIP_X = 1.0 + BOW_LEN, TIP_Y = Y_TOP;
+        const K = 8;
+
+        const pz = [], py = [];
+        // Bottom edge (port → starboard)
+        for (let i = 0; i <= K; i++) { pz.push(-ZH + 2*ZH*(i/K)); py.push(Y_BOT); }
+        // Starboard side (bottom → top)
+        for (let i = 1; i <= K; i++) { pz.push(ZH); py.push(Y_BOT + (Y_TOP-Y_BOT)*(i/K)); }
+        // Top edge (starboard → port) — these stay at y=TIP_Y throughout, giving a flat deck
+        for (let i = 1; i <= K; i++) { pz.push(ZH - 2*ZH*(i/K)); py.push(Y_TOP); }
+        // Port side (top → bottom, skip shared corners)
+        for (let i = 1; i < K;  i++) { pz.push(-ZH); py.push(Y_TOP - (Y_TOP-Y_BOT)*(i/K)); }
+        const P = pz.length;
+
+        for (let s = 0; s <= SECTIONS; s++) {
+          const v = s / SECTIONS;
+          const x  = 1.0 + v * BOW_LEN;
+          // Width narrows gradually; bottom keel rises slowly then sweeps up sharply near tip.
+          // Top vertices (py===Y_TOP===TIP_Y) always resolve to y=Y_TOP → flat deck.
+          const sz = Math.pow(1 - v, 0.8);  // beam convergence
+          const sy = Math.pow(1 - v, 0.3);  // keel rise (low power = stays low, curves up late)
+          for (let p = 0; p < P; p++)
+            verts.push(x, py[p]*sy + TIP_Y*(1-sy), pz[p]*sz);
+        }
+
+        // Tip vertex
+        const tipIdx = verts.length / 3;
+        verts.push(TIP_X, TIP_Y, 0);
+
+        // Quad strips between sections
+        for (let s = 0; s < SECTIONS - 1; s++)
+          for (let p = 0; p < P; p++) {
+            const a = s*P+p, b = s*P+(p+1)%P, c = (s+1)*P+(p+1)%P, d = (s+1)*P+p;
+            tris.push(a,b,c, a,c,d);
+          }
+
+        // Fan last section to tip
+        for (let p = 0; p < P; p++)
+          tris.push((SECTIONS-1)*P+p, (SECTIONS-1)*P+(p+1)%P, tipIdx);
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        geo.setIndex(tris);
+        geo.computeVertexNormals();
+        ship.add(new THREE.Mesh(geo,
+          new THREE.MeshStandardMaterial({ color: benchyColor, side: THREE.DoubleSide })));
+      })();
+
+      // Small cabin body
+      const cabinGeometry = new THREE.BoxGeometry(0.9, 0.7, 0.7);
+      const cabinMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
+      const cabin = new THREE.Mesh(cabinGeometry, cabinMaterial);
+      cabin.position.set(0.2, 0.50, 0);
+      ship.add(cabin);
+
+      // Cabin roof
+      const roofGeometry = new THREE.BoxGeometry(1.0, 0.1, 0.8);
+      const roofMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
+      const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+      roof.position.set(0.2, 0.90, 0);
+      ship.add(roof);
+
+
+      // Hull side rails — bottom at hull top (y=-0.1), top at bow base top (y=0.1), full hull length
+      const railGeometry = new THREE.BoxGeometry(2, 0.225, 0.06);
+      const railMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
+      const railStarboard = new THREE.Mesh(railGeometry, railMaterial);
+      railStarboard.position.set(0, 0.3125, 0.37); // bottom at y=0.20 (hull top), top at y=0.425
+      ship.add(railStarboard);
+      const railPort = new THREE.Mesh(railGeometry, railMaterial);
+      railPort.position.set(0, 0.3125, -0.37); // mirror on port side
+      ship.add(railPort);
+
+      // Chimney on roof
+      const chimneyGeometry = new THREE.CylinderGeometry(0.07, 0.07, 0.35, 16);
+      const chimneyMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
+      const chimney = new THREE.Mesh(chimneyGeometry, chimneyMaterial);
+      chimney.position.set(0.45, 1.15, 0);
+      ship.add(chimney);
+      // Black cap on chimney top
+      const chimneyCapMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+      const chimneyCap = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), chimneyCapMaterial);
+      chimneyCap.rotation.x = -Math.PI / 2;
+      chimneyCap.position.set(0.45, 1.326, 0);
+      ship.add(chimneyCap);
+
+      // Animated smoke particle system
+      const smokeParticles = [];
+      let smokeTimer = 0;
+      const wakeParticles = [];
+      let wakeTimer = 0;
+      let prevT = 0;
+
+      // Pre-populate smoke trail so it looks continuous from the start
+      for (let i = 0; i < 50; i++) {
+        const maxLife = 4.5 + Math.random() * 2.0;
+        const age = Math.random() * maxLife;
+        const life = age / maxLife;
+        const r = 0.03 + Math.random() * 0.02;
+        const p = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 8, 8),
+          new THREE.MeshStandardMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.85 * (1 - life * life) })
+        );
+        p.position.set(
+          0.45 - 0.12 * age + (Math.random() - 0.5) * 0.03,
+          1.325 + 0.25 * age,
+          (Math.random() - 0.5) * 0.04 * age
+        );
+        p.scale.setScalar(0.4 + life * 6.0);
+        p.userData = { age, maxLife };
+        ship.add(p);
+        smokeParticles.push(p);
+      }
+
+      // Front doorway on back of cabin
+      const doorGeometry = new THREE.PlaneGeometry(0.4, 0.65);
+      const doorMaterial = new THREE.MeshStandardMaterial({
+        color: 0x555555,
+        side: THREE.DoubleSide
+      });
+      const door = new THREE.Mesh(doorGeometry, doorMaterial);
+      door.position.set(-0.251, 0.50, 0); // slightly proud of cabin back face, centered on cabin height
+      door.rotation.y = -Math.PI / 2;
+      ship.add(door);
+
+      // Door handle — small cylinder protruding in -X from door face, offset to one side in Z
+      const handleGeometry = new THREE.CylinderGeometry(0.012, 0.012, 0.04, 8);
+      const handleMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
+      const handle = new THREE.Mesh(handleGeometry, handleMaterial);
+      handle.rotation.z = Math.PI / 2;               // orient along X axis
+      handle.position.set(-0.271, 0.50, 0.12);        // protrudes 0.04 out from door, near right edge
+      ship.add(handle);
+
+      // Windscreen on front of cabin — full cabin width (0.7), half cabin height (0.35), flush with top edge
+      const windscreenGeometry = new THREE.PlaneGeometry(0.6, 0.35);
+      const windscreenMaterial = new THREE.MeshStandardMaterial({
+        color: 0x87CEEB,
+        side: THREE.DoubleSide
+      });
+      const windscreen = new THREE.Mesh(windscreenGeometry, windscreenMaterial);
+      windscreen.position.set(0.652, 0.675, 0);
+      windscreen.rotation.y = Math.PI / 2;
+      ship.add(windscreen);
+      // Windscreen border — slightly larger black plane, cabin face→border→windscreen each 1mm apart
+      const windscreenBorderGeometry = new THREE.PlaneGeometry(0.63, 0.38);
+      const borderMaterial = new THREE.MeshStandardMaterial({ color: 0x000000, side: THREE.DoubleSide });
+      const windscreenBorder = new THREE.Mesh(windscreenBorderGeometry, borderMaterial);
+      windscreenBorder.position.set(0.651, 0.675, 0);
+      windscreenBorder.rotation.y = Math.PI / 2;
+      ship.add(windscreenBorder);
+
+      // Porthole on -Z side of cabin (port side)
+      const portholePortGeometry = new THREE.CircleGeometry(0.08, 24);
+      const portholePortMaterial = new THREE.MeshStandardMaterial({ color: 0x87CEEB });
+      const portholePort = new THREE.Mesh(portholePortGeometry, portholePortMaterial);
+      portholePort.position.set(0.2, 0.67, -0.352);
+      portholePort.rotation.y = Math.PI;
+      ship.add(portholePort);
+      // Port porthole border — cabin face→border→porthole each 1mm apart
+      const portholePortBorder = new THREE.Mesh(new THREE.CircleGeometry(0.096, 24), borderMaterial);
+      portholePortBorder.position.set(0.2, 0.67, -0.351);
+      portholePortBorder.rotation.y = Math.PI;
+      ship.add(portholePortBorder);
+
+      // Porthole on +Z side of cabin (starboard side)
+      const portholeGeometry = new THREE.CircleGeometry(0.08, 24);
+      const portholeMaterial = new THREE.MeshStandardMaterial({ color: 0x87CEEB });
+      const porthole = new THREE.Mesh(portholeGeometry, portholeMaterial);
+      porthole.position.set(0.2, 0.67, 0.352);
+      porthole.rotation.y = 0;
+      ship.add(porthole);
+      // Starboard porthole border — cabin face→border→porthole each 1mm apart
+      const portholeBorder = new THREE.Mesh(new THREE.CircleGeometry(0.096, 24), borderMaterial);
+      portholeBorder.position.set(0.2, 0.67, 0.351);
+      portholeBorder.rotation.y = 0;
+      ship.add(portholeBorder);
+
+      // Slightly raise ship above the water
+      ship.position.y = 0.1; // 50% submerged: hull ±1.4 world units from waterline at scale=4
+      ship.scale.setScalar(4);
+      scene.add(ship);
+      ship.traverse(obj => { if (obj.isMesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+
+      // Sky
+      const sky = new Sky();
+      sky.scale.setScalar(10000);
+      scene.add(sky);
+      const skyUniforms = sky.material.uniforms;
+      skyUniforms['turbidity'].value = 10;
+      skyUniforms['rayleigh'].value = 2;
+      skyUniforms['mieCoefficient'].value = 0.005;
+      skyUniforms['mieDirectionalG'].value = 0.8;
+
+      // Sun position — low on the horizon for golden-hour look
+      const sun = new THREE.Vector3();
+      const phi = THREE.MathUtils.degToRad(90 - 3);   // elevation 3° above horizon
+      const theta = THREE.MathUtils.degToRad(180);     // azimuth
+      sun.setFromSphericalCoords(1, phi, theta);
+      skyUniforms['sunPosition'].value.copy(sun);
+      ship.rotation.y = Math.atan2(-sun.z, sun.x) - Math.PI / 2 + Math.PI - Math.PI / 4; // point bow (+X) toward the sun, rotated 90° CW + 180° + 45° CW
+      const shipBaseYaw = ship.rotation.y;
+      const pmremGenerator = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmremGenerator.fromScene(sky).texture;
+
+      // Water — custom wave shader (Phil Crowther / codepen style)
+      new THREE.TextureLoader().load(
+        'https://threejs.org/examples/textures/waternormals.jpg',
+        texture => {
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+          texture.repeat.set(1, 1);
+          WtrNrm = texture;
+          const GrdRCs = 2, segNum = 64;
+          const geoWav = new THREE.PlaneGeometry(GrdSiz, GrdSiz, segNum, segNum);
+          geoWav.rotateX(-Math.PI * 0.5);
+          const matWav = new THREE.MeshStandardMaterial({
+            normalMap: WtrNrm,
+            metalness: 0.5,
+            roughness: 0.6,
+            onBeforeCompile: shader => {
+              shader.uniforms.time = gu.time;
+              shader.uniforms.grid = gu.grid;
+              shader.vertexShader = `
+                uniform float time;
+                uniform float grid;
+                varying float vHeight;
+                vec3 moveWave(vec3 p) {
+                  vec3 retVal = p;
+                  float ang;
+                  float kzx = 360.0/grid;
+                  ang = 50.0*time + -1.0*p.x*kzx + -2.0*p.z*kzx;
+                  if (ang>360.0) ang = ang-360.0;
+                  ang = ang*3.14159265/180.0;
+                  retVal.y = 3.0*sin(ang);
+                  ang = 25.0*time + -3.0*p.x*kzx;
+                  if (ang>360.0) ang = ang-360.0;
+                  ang = ang*3.14159265/180.0;
+                  retVal.y = retVal.y + 2.0*sin(ang);
+                  ang = 15.0*time - 3.0*p.z*kzx;
+                  if (ang>360.0) ang = ang-360.0;
+                  ang = ang*3.14159265/180.0;
+                  retVal.y = retVal.y + 2.0*sin(ang);
+                  ang = 50.0*time + 4.0*p.x*kzx + 8.0*p.z*kzx;
+                  if (ang>360.0) ang = ang-360.0;
+                  ang = ang*3.14159265/180.0;
+                  retVal.y = retVal.y + 0.5*sin(ang);
+                  ang = 50.0*time + 8.0*p.x*kzx;
+                  if (ang>360.0) ang = ang-360.0;
+                  ang = ang*3.14159265/180.0;
+                  retVal.y = retVal.y + 0.5*sin(ang);
+                  return retVal;
+                }
+                ${shader.vertexShader}
+              `.replace(
+                `#include <beginnormal_vertex>`,
+                `#include <beginnormal_vertex>
+                  vec3 p = position;
+                  vec2 move = vec2(1, 0);
+                  vec3 pos = moveWave(p);
+                  vec3 pos2 = moveWave(p + move.xyy);
+                  vec3 pos3 = moveWave(p + move.yyx);
+                  vNormal = normalize(cross(normalize(pos2-pos), normalize(pos3-pos)));
+                `
+              ).replace(
+                `#include <begin_vertex>`,
+                `#include <begin_vertex>
+                  transformed.y = pos.y;
+                  vHeight = pos.y;
+                `
+              );
+              shader.fragmentShader = `
+                varying float vHeight;
+                ${shader.fragmentShader}
+              `.replace(
+                `#include <color_fragment>`,
+                `#include <color_fragment>
+                  diffuseColor.rgb = mix(vec3(0.03125,0.0625,0.5), vec3(0.1,0.2,0.6), smoothstep(0.0, 6.0, vHeight));
+                  if (vHeight > 7.0) {
+                    diffuseColor.rgb = vec3(0.2,0.3,0.7);
+                  }
+                `
+              );
+            }
+          });
+          const zOff = -0.5 * GrdRCs * GrdSiz + 0.5 * GrdSiz;
+          for (let z = 0; z < GrdRCs; z++) {
+            for (let x = 0; x < GrdRCs; x++) {
+              const tile = new THREE.Mesh(geoWav, matWav);
+              tile.position.set(zOff + x * GrdSiz, -0.5, -(zOff + z * GrdSiz));
+              scene.add(tile);
+            }
+          }
+        }
+      );
+
+      // Basic lighting to make the ocean material visible
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+      // Keep XZ direction from sun but guarantee enough elevation for visible shadows
+      directionalLight.position.set(sun.x * 30, 20, sun.z * 30);
+      directionalLight.target.position.set(0, 0, 0);
+      scene.add(directionalLight.target);
+      directionalLight.castShadow = true;
+      directionalLight.shadow.mapSize.set(2048, 2048);
+      directionalLight.shadow.camera.near = 1;
+      directionalLight.shadow.camera.far = 100;
+      directionalLight.shadow.camera.left = -8;
+      directionalLight.shadow.camera.right = 8;
+      directionalLight.shadow.camera.top = 8;
+      directionalLight.shadow.camera.bottom = -8;
+      scene.add(directionalLight);
+
+      camera.position.set(6.25, 15, -25);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+      controls.maxPolarAngle = Math.PI * 0.495;
+      controls.minDistance = 2.0;
+      controls.maxDistance = 200.0;
+      controls.target.set(0, 0.5, 0);
+
+      window.addEventListener('resize', onWindowResize, false);
+
+      // Pre-populate wake so trail is visible on load
+      ship.updateMatrixWorld(true);
+      const sternInit = new THREE.Vector3(-1.2, 0, 0).applyMatrix4(ship.matrixWorld);
+      const fwXi = Math.cos(shipBaseYaw), fwZi = -Math.sin(shipBaseYaw);
+      const stXi = -fwXi, stZi = -fwZi;
+      for (let i = 0; i < 200; i++) {
+        const maxLife = 3.5 + Math.random() * 2;
+        const age = Math.random() * maxLife;
+        const life = age / maxLife;
+        const spread = (Math.random() * 2 - 1) * 0.4;
+        const vx = stXi * Math.cos(spread) - stZi * Math.sin(spread);
+        const vz = stXi * Math.sin(spread) + stZi * Math.cos(spread);
+        const speed = 2.5 + Math.random() * 2.0;
+        const beamOff = spread * 1.5;
+        const p = new THREE.Mesh(
+          new THREE.CircleGeometry(0.2 + Math.random() * 0.2, 6),
+          new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.75 * (1 - life * life), roughness: 1.0, depthWrite: false })
+        );
+        p.rotation.x = -Math.PI / 2;
+        p.position.set(
+          sternInit.x + (-stZi * beamOff) + vx * speed * age,
+          -0.45,
+          sternInit.z + (stXi * beamOff) + vz * speed * age
+        );
+        p.scale.setScalar(1 + life * 5);
+        p.userData = { age, maxLife, vx: vx * speed, vz: vz * speed };
+        scene.add(p);
+        wakeParticles.push(p);
+      }
+
+      animate();
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const t = clock.getElapsedTime();
+        const dt = Math.min(t - prevT, 0.1);
+        prevT = t;
+
+        // Spawn smoke particles at chimney top
+        smokeTimer += dt;
+        if (smokeTimer > 0.07) {
+          smokeTimer = 0;
+          const r = 0.03 + Math.random() * 0.02;
+          const p = new THREE.Mesh(
+            new THREE.SphereGeometry(r, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.85 })
+          );
+          p.position.set(0.45 + (Math.random() - 0.5) * 0.03, 1.325, (Math.random() - 0.5) * 0.03);
+          p.userData = { age: 0, maxLife: 4.5 + Math.random() * 2.0 };
+          ship.add(p);
+          smokeParticles.push(p);
+        }
+
+        // Update smoke particles
+        for (let i = smokeParticles.length - 1; i >= 0; i--) {
+          const p = smokeParticles[i];
+          p.userData.age += dt;
+          const life = p.userData.age / p.userData.maxLife;
+          if (life >= 1) {
+            ship.remove(p);
+            p.geometry.dispose();
+            p.material.dispose();
+            smokeParticles.splice(i, 1);
+          } else {
+            p.position.y += dt * 0.25;
+            p.position.x -= dt * 0.12;
+            p.position.z += (Math.random() - 0.5) * dt * 0.04;
+            p.scale.setScalar(0.4 + life * 6.0);
+            p.material.opacity = 0.65 * (1 - life * life);
+          }
+        }
+
+        gu.time.value = t;
+        if (WtrNrm) {
+          WtrNrm.offset.x -= 0.0005;
+          WtrNrm.offset.y += 0.00025;
+        }
+
+        // Wave function matching the GLSL shader exactly (tile-local coords)
+        const kzx = 360.0 / GrdSiz;
+        const DEG = Math.PI / 180.0;
+        const waveDisplace = (lx, lz) => {
+          let y = 3.0 * Math.sin((50*t - lx*kzx - 2*lz*kzx) * DEG);
+          y += 2.0 * Math.sin((25*t - 3*lx*kzx) * DEG);
+          y += 2.0 * Math.sin((15*t - 3*lz*kzx) * DEG);
+          y += 0.5 * Math.sin((50*t + 4*lx*kzx + 8*lz*kzx) * DEG);
+          y += 0.5 * Math.sin((50*t + 8*lx*kzx) * DEG);
+          return y;
+        };
+        // Ship is at world (0,0). Tile[0] is centred at world (-100, _, 100),
+        // so world→local: lx = wx + 100, lz = wz - 100
+        const waveAtWorld = (wx, wz) => waveDisplace(wx + 100, wz - 100);
+
+        // Ship bobs and tilts with the waves
+        const fwX = Math.cos(shipBaseYaw), fwZ = -Math.sin(shipBaseYaw);
+        // Sample at bow/stern (±4 world units = half ship length at scale=4)
+        const pitchSlope = waveAtWorld(fwX * 4, fwZ * 4) - waveAtWorld(-fwX * 4, -fwZ * 4);
+        // Sample at beam edges (±2 world units = half ship beam at scale=4)
+        const rollSlope  = waveAtWorld(-fwZ * 2, fwX * 2) - waveAtWorld(fwZ * 2, -fwX * 2);
+        ship.position.y = -0.5 + waveAtWorld(0, 0) + 0.6;
+        ship.rotation.set(rollSlope * 0.05, shipBaseYaw, pitchSlope * 0.05);
+
+        // Wake — foam particles spawned at stern, drifting in a V in world space
+        ship.updateMatrixWorld(true);
+        const sternWorld = new THREE.Vector3(-1.2, 0, 0).applyMatrix4(ship.matrixWorld);
+        sternWorld.y = -0.5 + waveAtWorld(sternWorld.x, sternWorld.z) + 0.05;
+        const stX = -fwX, stZ = -fwZ; // stern (backward) direction
+
+        wakeTimer += dt;
+        if (wakeTimer > 0.06) {
+          wakeTimer = 0;
+          for (let n = 0; n < 7; n++) {
+            // Uniformly fill the V from -0.7 to +0.7 rad (~40° each side)
+            const spread = (Math.random() * 2 - 1) * 0.4;
+            const vx = stX * Math.cos(spread) - stZ * Math.sin(spread);
+            const vz = stX * Math.sin(spread) + stZ * Math.cos(spread);
+            const speed = 2.5 + Math.random() * 2.0;
+            // Offset spawn laterally at the base so it starts wide
+            const beamOff = spread * 1.5;
+            const p = new THREE.Mesh(
+              new THREE.CircleGeometry(0.2 + Math.random() * 0.2, 6),
+              new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, roughness: 1.0, depthWrite: false })
+            );
+            p.rotation.x = -Math.PI / 2;
+            p.position.copy(sternWorld);
+            p.position.x += -stZ * beamOff;
+            p.position.z +=  stX * beamOff;
+            p.userData = { age: 0, maxLife: 3.5 + Math.random() * 2, vx: vx * speed, vz: vz * speed };
+            scene.add(p);
+            wakeParticles.push(p);
+          }
+        }
+
+        // Update wake particles
+        for (let i = wakeParticles.length - 1; i >= 0; i--) {
+          const p = wakeParticles[i];
+          p.userData.age += dt;
+          const life = p.userData.age / p.userData.maxLife;
+          if (life >= 1) {
+            scene.remove(p);
+            p.geometry.dispose();
+            p.material.dispose();
+            wakeParticles.splice(i, 1);
+          } else {
+            p.position.x += p.userData.vx * dt;
+            p.position.z += p.userData.vz * dt;
+            p.position.y = -0.5 + waveAtWorld(p.position.x, p.position.z) + 0.05;
+            p.scale.setScalar(1 + life * 5);
+            p.material.opacity = 0.75 * (1 - life * life);
+          }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+      }
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    init();
+  </script>
+</body>
+</html>
