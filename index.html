@@ -50,32 +50,55 @@
 
       const benchyColor = 0xff5533;
 
-      // Ship hull
-      const hullGeometry = new THREE.BoxGeometry(2, 0.70, 0.8);
-      const hullMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
-      const hull = new THREE.Mesh(hullGeometry, hullMaterial);
-      hull.position.y = -0.15; // bottom stays at y=-0.5, top now at y=0.20
-      ship.add(hull);
+      // Ship hull — V-shaped cross section
+      const V_RISE = 0.2; // chine rises 0.2 above keel
+      (function buildHull() {
+        const Y_BOT = -0.5, Y_TOP = 0.20, ZH = 0.4, YC = Y_BOT + V_RISE; // chine y = -0.3
+        // 10 vertices: 5 at stern (x=-1), 5 at bow-end (x=+1)
+        const pos = new Float32Array([
+          -1, Y_BOT, 0,   -1, YC,  ZH,  -1, Y_TOP,  ZH,  -1, Y_TOP, -ZH,  -1, YC, -ZH,  // 0-4 stern
+           1, Y_BOT, 0,    1, YC,  ZH,   1, Y_TOP,  ZH,   1, Y_TOP, -ZH,   1, YC, -ZH,  // 5-9 bow
+        ]);
+        const idx = [
+          0,1,2, 0,2,3, 0,3,4,          // stern cap
+          5,7,6, 5,8,7, 5,9,8,          // bow cap
+          0,5,6, 0,6,1,                  // starboard bottom panel
+          1,6,7, 1,7,2,                  // starboard side
+          2,7,8, 2,8,3,                  // top deck
+          3,8,9, 3,9,4,                  // port side
+          4,9,5, 4,5,0,                  // port bottom panel
+        ];
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setIndex(idx);
+        geo.computeVertexNormals();
+        ship.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: benchyColor })));
+      })();
 
       // Bow: lofted mesh — base matches hull+rail rectangle, tip is at rail-top height (deck level)
       // Top face stays flat at rail height; bottom keel sweeps upward to meet the tip.
       (function buildBow() {
         const verts = [], tris = [];
-        const BOW_LEN = 0.469, SECTIONS = 28;
+        const BOW_LEN = 0.7035, SECTIONS = 28;
         // Y_TOP = rail-top height (0.025), so tip is at the very top and deck is flat
         const Y_BOT = -0.5, Y_TOP = 0.425, ZH = 0.4;
         const TIP_X = 1.0 + BOW_LEN, TIP_Y = Y_TOP;
         const K = 8;
 
         const pz = [], py = [];
-        // Bottom edge (port → starboard)
-        for (let i = 0; i <= K; i++) { pz.push(-ZH + 2*ZH*(i/K)); py.push(Y_BOT); }
-        // Starboard side (bottom → top)
-        for (let i = 1; i <= K; i++) { pz.push(ZH); py.push(Y_BOT + (Y_TOP-Y_BOT)*(i/K)); }
+        // Bottom edge (port → starboard) — V-shaped: center at Y_BOT, corners at Y_BOT+V_RISE
+        for (let i = 0; i <= K; i++) {
+          const t = Math.abs(2*i/K - 1); // 0 at centre, 1 at edges
+          pz.push(-ZH + 2*ZH*(i/K));
+          py.push(Y_BOT + V_RISE * t);
+        }
+        // Starboard side (chine → top)
+        const Y_CHINE = Y_BOT + V_RISE;
+        for (let i = 1; i <= K; i++) { pz.push(ZH);  py.push(Y_CHINE + (Y_TOP-Y_CHINE)*(i/K)); }
         // Top edge (starboard → port) — these stay at y=TIP_Y throughout, giving a flat deck
         for (let i = 1; i <= K; i++) { pz.push(ZH - 2*ZH*(i/K)); py.push(Y_TOP); }
-        // Port side (top → bottom, skip shared corners)
-        for (let i = 1; i < K;  i++) { pz.push(-ZH); py.push(Y_TOP - (Y_TOP-Y_BOT)*(i/K)); }
+        // Port side (top → chine, skip shared corners)
+        for (let i = 1; i < K;  i++) { pz.push(-ZH); py.push(Y_TOP - (Y_TOP-Y_CHINE)*(i/K)); }
         const P = pz.length;
 
         for (let s = 0; s <= SECTIONS; s++) {
@@ -84,7 +107,7 @@
           // Width narrows gradually; bottom keel rises slowly then sweeps up sharply near tip.
           // Top vertices (py===Y_TOP===TIP_Y) always resolve to y=Y_TOP → flat deck.
           const sz = Math.pow(1 - v, 0.8);  // beam convergence
-          const sy = Math.pow(1 - v, 0.3);  // keel rise (low power = stays low, curves up late)
+          const sy = Math.pow(1 - v, 0.4);  // keel rise (low power = stays low, curves up late)
           for (let p = 0; p < P; p++)
             verts.push(x, py[p]*sy + TIP_Y*(1-sy), pz[p]*sz);
         }
@@ -143,6 +166,13 @@
       const chimney = new THREE.Mesh(chimneyGeometry, chimneyMaterial);
       chimney.position.set(0.45, 1.15, 0);
       ship.add(chimney);
+      // Black stripe at 70% up chimney (height=0.035, center at y=1.22)
+      const chimneyStripe = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.072, 0.072, 0.07, 16),
+        new THREE.MeshStandardMaterial({ color: 0xffffff })
+      );
+      chimneyStripe.position.set(0.45, 1.2025, 0);
+      ship.add(chimneyStripe);
       // Black cap on chimney top
       const chimneyCapMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
       const chimneyCap = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), chimneyCapMaterial);
