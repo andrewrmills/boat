@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Three.js Starter</title>
+  <title>Boat!</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
@@ -127,6 +127,14 @@
         for (let p = 0; p < P; p++)
           tris.push((SECTIONS-1)*P+p, (SECTIONS-1)*P+(p+1)%P, tipIdx);
 
+        // Back face cap at s=0
+        const backCapIdx = verts.length / 3;
+        let bcx = 0, bcy = 0, bcz = 0;
+        for (let p = 0; p < P; p++) { bcx += verts[p*3]; bcy += verts[p*3+1]; bcz += verts[p*3+2]; }
+        verts.push(bcx/P, bcy/P, bcz/P);
+        for (let p = 0; p < P; p++)
+          tris.push(backCapIdx, p, (p+1)%P);
+
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
         geo.setIndex(tris);
@@ -164,20 +172,20 @@
       const chimneyGeometry = new THREE.CylinderGeometry(0.07, 0.07, 0.35, 16);
       const chimneyMaterial = new THREE.MeshStandardMaterial({ color: benchyColor });
       const chimney = new THREE.Mesh(chimneyGeometry, chimneyMaterial);
-      chimney.position.set(0.45, 1.15, 0);
+      chimney.position.set(0.45, 1.125, 0);
       ship.add(chimney);
       // Black stripe at 70% up chimney (height=0.035, center at y=1.22)
       const chimneyStripe = new THREE.Mesh(
         new THREE.CylinderGeometry(0.072, 0.072, 0.07, 16),
         new THREE.MeshStandardMaterial({ color: 0xffffff })
       );
-      chimneyStripe.position.set(0.45, 1.2025, 0);
+      chimneyStripe.position.set(0.45, 1.1775, 0);
       ship.add(chimneyStripe);
       // Black cap on chimney top
       const chimneyCapMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
       const chimneyCap = new THREE.Mesh(new THREE.CircleGeometry(0.07, 16), chimneyCapMaterial);
       chimneyCap.rotation.x = -Math.PI / 2;
-      chimneyCap.position.set(0.45, 1.326, 0);
+      chimneyCap.position.set(0.45, 1.3005, 0);
       ship.add(chimneyCap);
 
       // Animated smoke particle system
@@ -199,7 +207,7 @@
         );
         p.position.set(
           0.45 - 0.12 * age + (Math.random() - 0.5) * 0.03,
-          1.325 + 0.25 * age,
+          1.300 + 0.25 * age,
           (Math.random() - 0.5) * 0.04 * age
         );
         p.scale.setScalar(0.4 + life * 6.0);
@@ -406,7 +414,7 @@
       directionalLight.shadow.camera.bottom = -8;
       scene.add(directionalLight);
 
-      camera.position.set(6.25, 15, -25);
+      camera.position.set(25.63, 11, -2.68);
 
       const controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
@@ -465,7 +473,7 @@
             new THREE.SphereGeometry(r, 8, 8),
             new THREE.MeshStandardMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.85 })
           );
-          p.position.set(0.45 + (Math.random() - 0.5) * 0.03, 1.325, (Math.random() - 0.5) * 0.03);
+          p.position.set(0.45 + (Math.random() - 0.5) * 0.03, 1.300, (Math.random() - 0.5) * 0.03);
           p.userData = { age: 0, maxLife: 4.5 + Math.random() * 2.0 };
           ship.add(p);
           smokeParticles.push(p);
